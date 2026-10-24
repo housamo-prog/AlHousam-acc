@@ -53,7 +53,7 @@ th{color:var(--m);font-weight:600}
   <div class="modal">
     <h3 id="m_title">تعديل الكمية</h3>
     <p class="m" id="m_desc"></p>
-    <input type="number" id="m_input" inputmode="decimal" style="text-align:center;font-size:20px;font-weight:bold;margin:10px 0">
+    <input type="number" id="m_input" inputmode="decimal" style="text-align:center;font-size:24px;font-weight:bold;margin:10px 0">
     <div class="row">
       <button class="b" onclick="saveModal()">حفظ</button>
       <button class="b s" onclick="closeModal()">إلغاء</button>
@@ -87,17 +87,22 @@ async function rpc(fn,args={}) {
 async function boot(){
   $('#app').innerHTML='<div style="display:flex;height:100vh;align-items:center;justify-content:center;"><b>جاري تحميل النظام...</b></div>';
   try {
-    const {data:{session}}=await db.auth.getSession();
+    const {data:{session}} = await db.auth.getSession();
     if(!session) return loginView();
+    
     const {data:{user}}=await db.auth.getUser();
     const {data:m_arr} = await db.from('shop_members').select('shop_id, role').eq('user_id',user.id).limit(1);
     if(!m_arr || m_arr.length === 0) return createShopView();
+    
     const m = m_arr[0];
     const {data:sh} = await db.from('shops').select('*').eq('id',m.shop_id).single();
+    
     S.shop = sh; S.member = m;
     await loadData();
     shell();
-  } catch(e) { $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ: ${e.message}</div>`; }
+  } catch(e) { 
+    $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ: ${e.message}</div>`; 
+  }
 }
 
 function loginView(){
@@ -116,32 +121,61 @@ async function doAuth(up){
   if(error)return toast(error.message,'error');
   boot();
 }
-function createShopView(){ $('#app').innerHTML=`<main style="display:flex;align-items:center;justify-content:center;height:100vh"><div class="card" style="width:100%;max-width:400px;text-align:center"><h3>إنشاء محل جديد</h3><input id=sn placeholder="اسم المحل"><button class="b" style="width:100%" onclick="createShop()">إنشاء</button></div></main>`; }
-async function createShop(){ const n=$('#sn').value.trim(); if(!n)return toast('اسم مطلوب','error'); try{ await rpc('create_shop',{p_name:n}); boot(); }catch(e){} }
+
+function createShopView(){ 
+  $('#app').innerHTML=`<main style="display:flex;align-items:center;justify-content:center;height:100vh">
+  <div class="card" style="width:100%;max-width:400px;text-align:center">
+    <h3>إنشاء محل جديد</h3>
+    <input id=sn placeholder="اسم المحل">
+    <button class="b" style="width:100%" onclick="createShop()">إنشاء</button>
+  </div></main>`; 
+}
+async function createShop(){ 
+  const n=$('#sn').value.trim(); if(!n)return toast('اسم مطلوب','error'); 
+  try{ await rpc('create_shop',{p_name:n}); boot(); }catch(e){} 
+}
 
 async function loadData(){
   const {data:brs} = await db.from('branches').select('*').eq('shop_id',S.shop.id).eq('active',true);
-  S.branches = brs || []; S.branchObj = S.branches.find(b=>b.is_default) || S.branches[0]; S.branch = S.branchObj?.id;
-  try { S.rate = await rpc('get_rate',{p_shop:S.shop.id, p_currency:'USD', p_date:today()}); } catch(e) { S.rate = S.shop.usd_rate||1; }
+  S.branches = brs || []; 
+  S.branchObj = S.branches.find(b=>b.is_default) || S.branches[0]; 
+  S.branch = S.branchObj?.id;
+
+  try { S.rate = await rpc('get_rate',{p_shop:S.shop.id, p_currency:'USD', p_date:today()}); } 
+  catch(e) { S.rate = S.shop.usd_rate||1; }
+
   const [p, pt, wh, sl] = await Promise.all([
     db.from('v_product_stock').select('*').eq('shop_id',S.shop.id).order('name'),
     db.from('partners').select('*').eq('shop_id',S.shop.id).eq('active',true).order('name'),
     db.from('warehouses').select('*').eq('branch_id',S.branch).eq('active',true),
     db.from('stock_levels').select('product_id,warehouse_id,qty').eq('shop_id',S.shop.id)
   ]);
-  S.prods = p.data || []; S.parts = pt.data || []; S.whs = wh.data || [];
-  S.lv = {}; (sl.data||[]).forEach(x=>S.lv[x.product_id+'|'+x.warehouse_id]=+x.qty);
-  if(!S.wh || !S.whs.find(w=>w.id===S.wh)){ S.wh = (S.whs.find(w=>w.is_default)||S.whs[0])?.id; }
+  
+  S.prods = p.data || []; 
+  S.parts = pt.data || []; 
+  S.whs = wh.data || [];
+  S.lv = {}; 
+  (sl.data||[]).forEach(x=>S.lv[x.product_id+'|'+x.warehouse_id]=+x.qty);
+  
+  if(!S.wh || !S.whs.find(w=>w.id===S.wh)){ 
+    S.wh = (S.whs.find(w=>w.is_default)||S.whs[0])?.id; 
+  }
 }
 const lvl=(pid,wid)=>S.lv[pid+'|'+wid]||0;
 
 function shell(){
   const tabs = [{k:'sale',n:'بيع',i:'🛒'},{k:'buy',n:'شراء',i:'📥'},{k:'hist',n:'الفواتير',i:'🧾'},{k:'prod',n:'المنتجات',i:'📦'},{k:'stock',n:'المخزون',i:'🏭'},{k:'debt',n:'الديون',i:'💰'},{k:'rep',n:'التقارير',i:'📊'}];
-  $('#app').innerHTML=`<header><div class="info"><div class="title">${esc(S.shop.name)}</div><div class="m">${esc(S.branchObj?.name||'')} · $ ${fmt(S.rate)}</div></div><div><button class="b s" style="padding:8px" onclick="db.auth.signOut()">خروج</button></div></header>
+  $('#app').innerHTML=`<header><div class="info"><div class="title">${esc(S.shop.name)}</div><div class="m">${esc(S.branchObj?.name||'')} · $ ${fmt(S.rate)}</div></div><div><button class="b s" style="padding:8px" onclick="db.auth.signOut().then(()=>location.reload())">خروج</button></div></header>
   <nav>${tabs.map(t=>`<button data-k="${t.k}" onclick="go('${t.k}')">${t.i} ${t.n}</button>`).join('')}</nav><main id="v"></main>`;
   go(S.tab);
 }
-function go(k){ S.tab=k; document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); const map={sale:viewSale,buy:viewSale,hist:viewHist,prod:viewProds,stock:viewStock,debt:viewDebt,rep:viewRep}; const fn=map[k]; if(fn) fn(); }
+
+function go(k){ 
+  S.tab=k; 
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); 
+  const map={sale:viewSale,buy:viewSale,hist:viewHist,prod:viewProds,stock:viewStock,debt:viewDebt,rep:viewRep}; 
+  const fn=map[k]; if(fn) fn(); 
+}
 
 // ============= MODAL & STOCK =============
 function openModal(title, desc, defaultVal, pid, whid){
@@ -151,34 +185,38 @@ function openModal(title, desc, defaultVal, pid, whid){
   $('#m_input').focus();
 }
 function closeModal(){ $('#myModal').style.display='none'; }
+
 async function saveModal(){
   const val = +$('#m_input').value;
   if(isNaN(val) || val < 0) return toast('كمية غير صحيحة','error');
   closeModal();
   
-  // الحماية من الخطأ: إذا لم يكن هناك مستودع محدد، نأخذ الأول
   let final_wh = S.mod_wh;
   if(!final_wh || final_wh === 'undefined') final_wh = S.wh || S.whs[0]?.id;
-  
   if(!final_wh) return toast('لم يتم العثور على مستودع','error');
 
   try {
     await rpc('post_stock_adjust', {p_shop:S.shop.id, p_branch:S.branch, p_wh:final_wh, p_product:S.mod_pid, p_new_qty:val, p_client:uid(), p_reason:'جرد'});
-    toast('تم تحديث المخزون ✓','ok'); await loadData(); viewStock();
+    toast('تم تحديث المخزون ✓','ok'); 
+    await loadData(); 
+    viewStock();
   } catch(e){}
 }
 
 function viewStock(){
   $('#v').innerHTML = `<div class="card"><h3>إدارة المخزون</h3><p class="m">اضغط على أي منتج لإدخال الكمية الفعلية (الافتتاحية أو الجرد).</p>
-    <select id=st_wh style="margin-bottom:10px" onchange="S.wh=this.value">${S.whs.map(w=>`<option value="${w.id}" ${w.id===S.wh?'selected':''}>${esc(w.name)}</option>`).join('')}</select>
+    <select id=st_wh style="margin-bottom:10px" onchange="S.wh=this.value;stockList()">${S.whs.map(w=>`<option value="${w.id}" ${w.id===S.wh?'selected':''}>${esc(w.name)}</option>`).join('')}</select>
     <input id=st_q placeholder="ابحث عن منتج..." oninput="stockList()">
     <div id=st_list></div>
   </div>`;
   stockList();
 }
+
 function stockList(){
-  const q = norm($('#st_q').value); const wh = $('#st_wh').value;
+  const q = norm($('#st_q').value); 
+  const wh = $('#st_wh').value || S.wh;
   const list = S.prods.filter(p=>!q || norm(p.name).includes(q));
+  
   $('#st_list').innerHTML = list.map(p=>`
     <div class="it" onclick="openModal('تعديل كمية ${esc(p.name)}','الكمية الحالية: ${fmt(lvl(p.id,wh))}', ${lvl(p.id,wh)}, '${p.id}', '${wh}')">
       <div><div class="name">${esc(p.name)}</div><div class="m">اضغط للتعديل</div></div>
@@ -199,6 +237,7 @@ function viewSale(){
   </div>`;
   S.cur = 'SYP'; renderCart(); searchProd();
 }
+
 function searchProd(selectFirst=false){
   const q = norm($('#q').value); const list = S.prods.filter(p=>!q || norm(p.name).includes(q) || norm(p.barcode)===q).slice(0,10);
   if(selectFirst && list.length===1 && q){ addToCart(list[0]); $('#q').value=''; searchProd(); return; }
@@ -207,12 +246,14 @@ function searchProd(selectFirst=false){
     return `<div class="it" onclick='addToCart(${JSON.stringify(p).replace(/'/g,"&#39;")})'><div><div class="name">${esc(p.name)}</div><div class="m">المخزون: ${fmt(stock)} ${p.unit}</div></div><div style="text-align:end"><div class="name">${fmt(p.sale_price)}</div><div class="m">${p.sale_currency}</div></div></div>`;
   }).join('') || '<div class="m" style="text-align:center;padding:20px">لا توجد نتائج</div>';
 }
+
 function addToCart(p){
   if(S.mode==='sale' && lvl(p.id, S.wh) <= 0) return toast('نفد المخزون','error');
   const existing = S.cart.find(x=>x.id===p.id);
   if(existing) existing.qty++; else S.cart.push({id:p.id,name:p.name,qty:1,price:S.mode==='sale'?p.sale_price:0,unit:p.unit});
   renderCart();
 }
+
 function renderCart(){
   if(S.cart.length===0){ $('#cartitems').innerHTML='<div class="m" style="text-align:center;padding:10px">الفاتورة فارغة</div>'; $('#total').textContent='0 '+S.cur; return; }
   let total=0;
@@ -222,10 +263,12 @@ function renderCart(){
   }).join('');
   $('#total').textContent = fmt(total)+' '+S.cur;
 }
+
 function setQty(k,v){ const n=+v; if(n>0) S.cart[k].qty=n; renderCart(); }
 function setPrice(k,v){ const n=+v; if(n>=0) S.cart[k].price=n; renderCart(); }
 function changeCur(v){ S.cur=v; renderCart(); }
 function clearCart(){ if(!S.cart.length)return; if(!confirm('مسح الفاتورة؟'))return; S.cart=[]; renderCart(); }
+
 async function submitInvoice(){
   if(S.busy || !S.cart.length) return toast('الفاتورة فارغة','error');
   const total = S.cart.reduce((s,i)=>s+i.qty*i.price,0); let paid = $('#paid').value===''? total : +$('#paid').value;
@@ -257,6 +300,7 @@ async function viewHist(){
     </div>`).join('') || '<div class="m" style="text-align:center;padding:20px">لا فواتير بعد</div>'}
   </div>`;
 }
+
 async function showInv(id,kind){
   const table = kind==='sale'? 'sales':'purchases';
   const itemsT = kind==='sale'? 'sale_items':'purchase_items';
@@ -271,12 +315,12 @@ async function showInv(id,kind){
     <div style="margin:16px 0">${items_data.map(i=>`<div class="it" style="cursor:default"><div><div class="name">${esc(i.products?.name)}</div><div class="m">${fmt(i.qty)} × ${fmt(i.price||i.unit_cost)}</div></div><div class="name">${fmt(i.line_total)}</div></div>`).join('')}</div>
     <div class="big-total">${fmt(inv_data.total)} ${inv_data.currency}</div>
     <div class="m" style="text-align:center">مدفوع: ${fmt(inv_data.paid)} · متبقي: ${fmt(inv_data.total-inv_data.paid)}</div>
-    <div class="row" style="margin-top:16px"><button class="b" onclick="printInv()">🖨️ طباعة</button>${!inv_data.voided_at && S.member.role!=='viewer'?`<button class="b r" onclick="voidInv('${id}','${kind}')">إلغاء</button>`:''}</div>
+    <div class="row" style="margin-top:16px"><button class="b" onclick="window.print()">🖨️ طباعة</button>${!inv_data.voided_at && S.member.role!=='viewer'?`<button class="b r" onclick="voidInv('${id}','${kind}')">إلغاء</button>`:''}</div>
     <button class="b s" style="width:100%;margin-top:8px" onclick="viewHist()">رجوع</button>
   </div>`;
 }
+
 async function voidInv(id,kind){ if(!confirm('إلغاء الفاتورة؟')) return; try { await rpc('void_invoice', {p_shop:S.shop.id, p_kind:kind, p_id:id}); toast('تم الإلغاء ✓','ok'); await loadData(); viewHist(); } catch(e){} }
-function printInv(){ window.print(); }
 
 // ============= PRODUCTS =============
 function viewProds(){
