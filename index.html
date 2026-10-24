@@ -7,9 +7,8 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f7b4f">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
-:root{--bg:#f4f6f8;--c:#fff;--t:#1b1f24;--m:#6b7280;--p:#0f7b4f;--p-hover:#0c623e;--b:#e5e7eb;--r:#c0392b;--g:#f59e0b;--shadow:0 2px 8px rgba(0,0,0,.05)}
+:root{--bg:#f4f6f8;--c:#fff;--t:#1b1f24;--m:#6b7280;--p:#0f7b4f;--p-hover:#0c623e;--b:#e5e7eb;--r:#c0392b;--shadow:0 2px 8px rgba(0,0,0,.05)}
 @media(prefers-color-scheme:dark){:root{--bg:#121417;--c:#1e2328;--t:#e8eaed;--m:#9aa3ad;--b:#2d343a;--shadow:0 2px 8px rgba(0,0,0,.3)}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;font:15px system-ui,"Segoe UI",Tahoma,sans-serif;background:var(--bg);color:var(--t);height:100vh;overflow:hidden;display:flex;flex-direction:column}
@@ -31,7 +30,6 @@ button.b:active{background:var(--p-hover)}
 button.b:disabled{opacity:.6;cursor:not-allowed}
 button.b.s{background:var(--b);color:var(--t)}
 button.b.r{background:var(--r)}
-button.b.g{background:var(--g)}
 .row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
 .row>*{flex:1;margin-bottom:0}
 .it{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px;border-bottom:1px solid var(--b);cursor:pointer;transition:background .1s}
@@ -85,7 +83,6 @@ let S={
   shop:null, member:null, branch:null, branchObj:null, wh:null, whs:[], branches:[],
   prods:[], parts:[], cats:[], cart:[], cur:'SYP', rate:1,
   tab:'sale', mode:'sale', busy:false,
-  cogs:[], // for UI
   hist:[], histKind:'sale'
 };
 
@@ -110,94 +107,87 @@ db.auth.onAuthStateChange((e,s)=>{
 });
 
 async function boot(){
-  const {data:{session}}=await db.auth.getSession();
-  if(!session) return loginView();
-  await loadShop();
+  $('#app').innerHTML='<div style="display:flex;height:100vh;align-items:center;justify-content:center;"><b>جاري تحميل النظام...</b></div>';
+  try {
+    const {data:{session}, error: sErr}=await db.auth.getSession();
+    if(sErr) throw sErr;
+    if(!session) return loginView();
+    
+    const {data:{user}}=await db.auth.getUser();
+    if(!user) return loginView();
+    
+    const {data:m_arr, error: m_err} = await db.from('shop_members').select('shop_id, role, max_discount_pct').eq('user_id',user.id).limit(1);
+    
+    if(m_err) {
+      $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ: ${m_err.message}</div>`;
+      return;
+    }
+    
+    if(!m_arr || m_arr.length === 0){
+      return createShopView();
+    }
+    
+    const m = m_arr[0];
+    const {data:sh, error: sh_err} = await db.from('shops').select('*').eq('id',m.shop_id).single();
+    if(sh_err) {
+      $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ في المحل: ${sh_err.message}</div>`;
+      return;
+    }
+    
+    S.shop = sh; S.member = m;
+    await loadData();
+    shell();
+  } catch(e) {
+    $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">فشل الاتصال: ${e.message}</div>`;
+  }
 }
 
 function loginView(){
   $('#app').innerHTML=`<main style="display:flex;align-items:center;justify-content:center;height:100vh">
   <div class="card" style="width:100%;max-width:400px">
-    <h2 style="text-align:center;color:var(--p)">الحسام للمحاسبة</h2>
-    <p class="m" style="text-align:center;margin-bottom:16px">سجّل الدخول للمتابعة</p>
+    <h2 style="text-align:center;color:var(--p)">الحسام</h2>
     <input id=em type=email dir=ltr placeholder="البريد الإلكتروني">
     <input id=pw type=password dir=ltr placeholder="كلمة المرور">
     <div class="row">
       <button class="b" style="flex:2" onclick="doAuth(0)">دخول</button>
       <button class="b s" onclick="doAuth(1)">حساب جديد</button>
     </div>
-    <button class="b s" style="width:100%;margin-top:8px" onclick="forgot()">نسيت كلمة المرور</button>
   </div></main>`;
 }
 async function doAuth(up){
   const e=$('#em').value.trim(),p=$('#pw').value;
   if(!e||!p)return toast('أدخل البريد وكلمة المرور','error');
-  const {data,error}=up?await db.auth.signUp({email:e,password:p}):await db.auth.signInWithPassword({email:e,password:p});
+  const {error}=up?await db.auth.signUp({email:e,password:p}):await db.auth.signInWithPassword({email:e,password:p});
   if(error)return toast(error.message,'error');
-  if(!data.session)return toast('تم إنشاء الحساب. تحقق من بريدك للتأكيد ثم سجّل الدخول.','ok');
-  await loadShop();
-}
-async function forgot(){
-  const e=$('#em').value.trim();
-  if(!e)return toast('أدخل بريدك أولاً','error');
-  const {error}=await db.auth.resetPasswordForEmail(e);
-  toast(error?error.message:'تم إرسال رابط إعادة التعيين','ok');
+  boot();
 }
 
-// ============= INIT =============
-async function loadShop(){
-  const {data:{user}}=await db.auth.getUser();
-  if(!user)return loginView();
-  
-  // find shop
-  const {data:m}=await db.from('shop_members').select('shop_id, role, max_discount_pct').eq('user_id',user.id).eq('active',true).limit(1).single();
-  
-  if(!m){
-    // create new shop view
-    $('#app').innerHTML=`<main style="display:flex;align-items:center;justify-content:center;height:100vh">
-    <div class="card" style="width:100%;max-width:400px">
-      <h3>إنشاء محل جديد</h3>
-      <p class="m">ابدأ بتسمية محلك</p>
-      <input id=sn placeholder="اسم المحل">
-      <button class="b" style="width:100%" onclick="createMyShop()">إنشاء المحل (تجربة 14 يوم)</button>
-      <button class="b s" style="width:100%;margin-top:8px" onclick="location.reload()">تحديث</button>
-    </div></main>`;
-    return;
-  }
-
-  const {data:sh}=await db.from('shops').select('*').eq('id',m.shop_id).single();
-  S.shop=sh; S.member=m;
-  
-  // load branches
-  const {data:brs}=await db.from('branches').select('*').eq('shop_id',sh.id).eq('active',true);
-  S.branches=brs||[];
-  
-  // get current branch from storage
-  const savedBr=localStorage.husam_branch;
-  S.branchObj=S.branches.find(b=>b.id===savedBr) || S.branches.find(b=>b.is_default) || S.branches[0];
-  S.branch=S.branchObj?.id;
-
-  // get exchange rate for today
-  try {
-    S.rate = await rpc('get_rate',{p_shop:S.shop.id, p_currency:'USD', p_date:today()});
-  } catch(e) {
-    S.rate = sh.usd_rate || 1;
-  }
-
-  await refreshData();
-  shell();
+function createShopView(){
+  $('#app').innerHTML=`<main style="display:flex;align-items:center;justify-content:center;height:100vh">
+  <div class="card" style="width:100%;max-width:400px;text-align:center">
+    <h3>إنشاء محل جديد</h3>
+    <input id=sn placeholder="اسم المحل">
+    <button class="b" style="width:100%" onclick="createShop()">إنشاء</button>
+  </div></main>`;
 }
-
-async function createMyShop(){
+async function createShop(){
   const n=$('#sn').value.trim();
   if(!n)return toast('اسم المحل مطلوب','error');
   try{
-    await rpc('create_shop',{p_name:n});
-    await loadShop();
+    await rpc('create_shop', {p_name:n});
+    boot();
   }catch(e){}
 }
 
-async function refreshData(){
+async function loadData(){
+  const {data:brs} = await db.from('branches').select('*').eq('shop_id',S.shop.id).eq('active',true);
+  S.branches = brs || [];
+  S.branchObj = S.branches.find(b=>b.is_default) || S.branches[0];
+  S.branch = S.branchObj?.id;
+
+  try { S.rate = await rpc('get_rate',{p_shop:S.shop.id, p_currency:'USD', p_date:today()}); } 
+  catch(e) { S.rate = S.shop.usd_rate || 1; }
+
   const [p, pt, wh, sl, cat] = await Promise.all([
     db.from('v_product_stock').select('*').eq('shop_id',S.shop.id).order('name'),
     db.from('partners').select('*').eq('shop_id',S.shop.id).eq('active',true).order('name'),
@@ -205,13 +195,12 @@ async function refreshData(){
     db.from('stock_levels').select('product_id,warehouse_id,qty').eq('shop_id',S.shop.id),
     db.from('categories').select('*').eq('shop_id',S.shop.id).eq('active',true).order('name')
   ]);
-  S.prods=p.data||[];
-  S.parts=pt.data||[];
-  S.whs=wh.data||[];
-  S.cats=cat.data||[];
-  S.lv={};
+  S.prods = p.data || [];
+  S.parts = pt.data || [];
+  S.whs = wh.data || [];
+  S.cats = cat.data || [];
+  S.lv = {};
   (sl.data||[]).forEach(x=>S.lv[x.product_id+'|'+x.warehouse_id]=+x.qty);
-  
   if(!S.wh || !S.whs.find(w=>w.id===S.wh)){
     S.wh = (S.whs.find(w=>w.is_default)||S.whs[0])?.id;
   }
@@ -222,18 +211,12 @@ const lvl=(pid,wid)=>S.lv[pid+'|'+wid]||0;
 // ============= UI SHELL =============
 function shell(){
   const tabs = [
-    {k:'sale', n:'بيع', icon:'🛒'},
-    {k:'buy', n:'شراء', icon:'📥'},
-    {k:'hist', n:'الفواتير', icon:'🧾'},
-    {k:'prod', n:'المنتجات', icon:'📦'},
-    {k:'debt', n:'الديون', icon:'💰'},
-    {k:'rep', n:'التقارير', icon:'📊'},
-    {k:'stock', n:'المخزون', icon:'🏭'},
-    {k:'mfg', n:'التصنيع', icon:'⚙️'},
-    {k:'acc', n:'الحسابات', icon:'📒'},
-    {k:'team', n:'الفريق', icon:'👥'}
+    {k:'sale', n:'بيع', icon:'🛒'}, {k:'buy', n:'شراء', icon:'📥'},
+    {k:'hist', n:'الفواتير', icon:'🧾'}, {k:'prod', n:'المنتجات', icon:'📦'},
+    {k:'debt', n:'الديون', icon:'💰'}, {k:'rep', n:'التقارير', icon:'📊'},
+    {k:'stock', n:'المخزون', icon:'🏭'}, {k:'mfg', n:'التصنيع', icon:'⚙️'},
+    {k:'acc', n:'الحسابات', icon:'📒'}, {k:'team', n:'الفريق', icon:'👥'}
   ];
-  
   $('#app').innerHTML=`<header>
     <div class="info">
       <div class="title">${esc(S.shop.name)}</div>
@@ -255,10 +238,8 @@ function switchBranch(){
   const v=prompt('اختر رقم الفرع:\n'+names);
   const idx=parseInt(v)-1;
   if(idx>=0 && idx<S.branches.length){
-    S.branchObj=S.branches[idx];
-    S.branch=S.branchObj.id;
-    localStorage.husam_branch=S.branch;
-    refreshData().then(()=>shell());
+    S.branchObj=S.branches[idx]; S.branch=S.branchObj.id;
+    loadData().then(()=>shell());
   }
 }
 
@@ -266,8 +247,7 @@ function go(k){
   S.tab=k;
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.k===k));
   const map={sale:viewSale,buy:viewSale,hist:viewHist,prod:viewProds,debt:viewDebt,rep:viewRep,stock:viewStock,mfg:viewMfg,acc:viewAcc,team:viewTeam};
-  const fn=map[k];
-  if(fn) fn();
+  const fn=map[k]; if(fn) fn();
 }
 
 // ============= SALE / BUY =============
@@ -300,10 +280,8 @@ function viewSale(){
       <button class="b s" onclick="clearCart()">مسح</button>
     </div>
   </div>`;
-  
-  S.cur = isSale?'SYP':'SYP';
-  renderCart();
-  searchProd();
+  S.cur = 'SYP';
+  renderCart(); searchProd();
   setTimeout(()=>$('#q')?.focus(),100);
 }
 
@@ -312,23 +290,14 @@ function searchProd(selectFirst=false){
   const list = S.prods.filter(p=>!q || norm(p.name).includes(q) || norm(p.barcode)===q).slice(0,10);
   
   if(selectFirst && list.length===1 && q){
-    addToCart(list[0]);
-    $('#q').value='';
-    searchProd();
-    return;
+    addToCart(list[0]); $('#q').value=''; searchProd(); return;
   }
   
   $('#prodlist').innerHTML = list.map(p=>{
     const stock = lvl(p.id, S.wh);
     return `<div class="it" onclick='addToCart(${JSON.stringify(p).replace(/'/g,"&#39;")})'>
-      <div>
-        <div class="name">${esc(p.name)}</div>
-        <div class="m">المخزون: ${fmt(stock)} ${p.unit}</div>
-      </div>
-      <div style="text-align:end">
-        <div class="name">${fmt(p.sale_price)}</div>
-        <div class="m">${p.sale_currency}</div>
-      </div>
+      <div><div class="name">${esc(p.name)}</div><div class="m">المخزون: ${fmt(stock)} ${p.unit}</div></div>
+      <div style="text-align:end"><div class="name">${fmt(p.sale_price)}</div><div class="m">${p.sale_currency}</div></div>
     </div>`;
   }).join('') || '<div class="m" style="text-align:center;padding:20px">لا توجد نتائج</div>';
 }
@@ -337,23 +306,15 @@ function addToCart(p){
   if(S.mode==='sale' && lvl(p.id, S.wh) <= 0) return toast('نفد المخزون في هذا المستودع','error');
   const existing = S.cart.find(x=>x.id===p.id);
   if(existing) existing.qty++;
-  else {
-    S.cart.push({
-      id: p.id, name: p.name, qty: 1,
-      price: S.mode==='sale'? p.sale_price : 0,
-      unit: p.unit, maxStock: lvl(p.id, S.wh)
-    });
-  }
+  else S.cart.push({id: p.id, name: p.name, qty: 1, price: S.mode==='sale'? p.sale_price : 0, unit: p.unit});
   renderCart();
 }
 
 function renderCart(){
   if(S.cart.length===0){
     $('#cartitems').innerHTML='<div class="m" style="text-align:center;padding:10px">الفاتورة فارغة</div>';
-    $('#total').textContent='0 '+S.cur;
-    return;
+    $('#total').textContent='0 '+S.cur; return;
   }
-  
   let total=0;
   $('#cartitems').innerHTML = S.cart.map((i,k)=>{
     total += (i.qty*i.price);
@@ -372,30 +333,13 @@ function renderCart(){
       </div>
     </div>`;
   }).join('');
-  
   $('#total').textContent = fmt(total)+' '+S.cur;
 }
 
-function setQty(k,v){
-  const n=+v;
-  if(n>0) S.cart[k].qty=n;
-  renderCart();
-}
-function setPrice(k,v){
-  const n=+v;
-  if(n>=0) S.cart[k].price=n;
-  renderCart();
-}
-function changeCur(v){
-  S.cur=v;
-  renderCart();
-}
-function clearCart(){
-  if(!S.cart.length)return;
-  if(!confirm('مسح الفاتورة بالكامل؟'))return;
-  S.cart=[];
-  renderCart();
-}
+function setQty(k,v){ const n=+v; if(n>0) S.cart[k].qty=n; renderCart(); }
+function setPrice(k,v){ const n=+v; if(n>=0) S.cart[k].price=n; renderCart(); }
+function changeCur(v){ S.cur=v; renderCart(); }
+function clearCart(){ if(!S.cart.length)return; if(!confirm('مسح الفاتورة بالكامل؟'))return; S.cart=[]; renderCart(); }
 
 async function submitInvoice(){
   if(S.busy) return;
@@ -406,57 +350,38 @@ async function submitInvoice(){
   let paid = paidInput===''? total : +paidInput;
   if(paid<0 || isNaN(paid)) return toast('مبلغ غير صحيح','error');
   
-  S.busy=true;
-  const btn = event.target;
-  btn.disabled=true; btn.textContent='جارٍ...';
+  S.busy=true; const btn = event.target; btn.disabled=true; btn.textContent='جارٍ...';
   
   try {
     const items = S.cart.map(i=>{
       if(S.mode==='sale') return {product_id:i.id, qty:i.qty, price:i.price};
       return {product_id:i.id, qty:i.qty, unit_cost:i.price};
     });
-    
-    const args = {
-      p_shop: S.shop.id, p_branch: S.branch, p_wh: S.wh,
-      p_partner: $('#partner').value||null,
-      p_currency: S.cur, p_paid: paid,
-      p_items: items, p_client: uid()
-    };
-    
+    const args = {p_shop: S.shop.id, p_branch: S.branch, p_wh: S.wh, p_partner: $('#partner').value||null, p_currency: S.cur, p_paid: paid, p_items: items, p_client: uid()};
     if(S.mode==='sale') await rpc('post_sale', args);
     else await rpc('post_purchase', args);
-    
     toast('تم الحفظ بنجاح ✓','ok');
     S.cart=[]; S.cur='SYP';
-    await refreshData();
-    viewSale();
+    await loadData(); viewSale();
   } catch(e){}
-  finally{
-    S.busy=false;
-  }
+  finally{ S.busy=false; }
 }
 
 // ============= HISTORY =============
 async function viewHist(){
   $('#v').innerHTML=`<div class="m" style="text-align:center;padding:20px">جاري التحميل...</div>`;
-  
   const [sales, purchases] = await Promise.all([
     db.from('sales').select('id,sale_date,currency,total,paid,voided_at,partners(name)').eq('shop_id',S.shop.id).order('created_at',{ascending:false}).limit(30),
     db.from('purchases').select('id,purchase_date,currency,total,paid,voided_at,partners(name)').eq('shop_id',S.shop.id).order('created_at',{ascending:false}).limit(30)
   ]);
-  
   const all = [
     ...(sales.data||[]).map(x=>({...x,kind:'sale',date:x.sale_date})),
     ...(purchases.data||[]).map(x=>({...x,kind:'purchase',date:x.purchase_date}))
   ].sort((a,b)=>b.date.localeCompare(a.date));
   
-  $('#v').innerHTML = `<div class="card">
-    <h3>آخر الفواتير</h3>
+  $('#v').innerHTML = `<div class="card"><h3>آخر الفواتير</h3>
     ${all.map(x=>`<div class="it" onclick="showInv('${x.id}','${x.kind}')">
-      <div>
-        <div class="name">${x.kind==='sale'?'بيع':'شراء'} #${x.id.slice(0,8)}</div>
-        <div class="m">${x.date} · ${esc(x.partners?.name||'نقدي')}</div>
-      </div>
+      <div><div class="name">${x.kind==='sale'?'بيع':'شراء'} #${x.id.slice(0,8)}</div><div class="m">${x.date} · ${esc(x.partners?.name||'نقدي')}</div></div>
       <div style="text-align:end">
         <div class="name ${x.voided_at?'strike':''}">${fmt(x.total)} ${x.currency}</div>
         <div class="m">${x.voided_at?'<span class="badge r">ملغاة</span>':(x.paid>=x.total?'مدفوعة':'<span class="badge">متبقي '+fmt(x.total-x.paid)+'</span>')}</div>
@@ -469,14 +394,11 @@ async function showInv(id,kind){
   const table = kind==='sale'? 'sales':'purchases';
   const itemsT = kind==='sale'? 'sale_items':'purchase_items';
   const fk = kind==='sale'? 'sale_id':'purchase_id';
-  
   const [inv, items] = await Promise.all([
     db.from(table).select('*,partners(name)').eq('id',id).single(),
     db.from(itemsT).select('*,products(name)').eq(fk,id)
   ]);
-  
-  const inv_data = inv.data;
-  const items_data = items.data||[];
+  const inv_data = inv.data; const items_data = items.data||[];
   
   $('#v').innerHTML = `<div class="card">
     <h3>${kind==='sale'?'فاتورة بيع':'فاتورة شراء'} #${esc(inv_data.invoice_no)}</h3>
@@ -484,24 +406,15 @@ async function showInv(id,kind){
     <div class="m">الزبون/المورد: ${esc(inv_data.partners?.name||'نقدي')}</div>
     <div class="m">العملة: ${inv_data.currency} · سعر الصرف: ${fmt(inv_data.rate)}</div>
     ${inv_data.voided_at?'<div class="badge r" style="margin:8px 0">ملغاة</div>':''}
-    
-    <div style="margin:16px 0">
-    ${items_data.map(i=>`<div class="it" style="cursor:default">
-      <div>
-        <div class="name">${esc(i.products?.name)}</div>
-        <div class="m">${fmt(i.qty)} × ${fmt(i.price||i.unit_cost)}</div>
-      </div>
+    <div style="margin:16px 0">${items_data.map(i=>`<div class="it" style="cursor:default">
+      <div><div class="name">${esc(i.products?.name)}</div><div class="m">${fmt(i.qty)} × ${fmt(i.price||i.unit_cost)}</div></div>
       <div class="name">${fmt(i.line_total)}</div>
-    </div>`).join('')}
-    </div>
-    
+    </div>`).join('')}</div>
     <div class="big-total">${fmt(inv_data.total)} ${inv_data.currency}</div>
     <div class="m" style="text-align:center">مدفوع: ${fmt(inv_data.paid)} · متبقي: ${fmt(inv_data.total-inv_data.paid)}</div>
-    
     <div class="row" style="margin-top:16px">
       <button class="b" onclick="printInv('${id}','${kind}')">🖨️ طباعة</button>
-      ${!inv_data.voided_at && S.member.role!=='viewer'?`
-      <button class="b r" onclick="voidInv('${id}','${kind}')">إلغاء</button>`:''}
+      ${!inv_data.voided_at && S.member.role!=='viewer'?`<button class="b r" onclick="voidInv('${id}','${kind}')">إلغاء</button>`:''}
     </div>
     <button class="b s" style="width:100%;margin-top:8px" onclick="viewHist()">رجوع</button>
   </div>`;
@@ -509,19 +422,10 @@ async function showInv(id,kind){
 
 async function voidInv(id,kind){
   if(!confirm('إلغاء هذه الفاتورة؟ سيتم عكس المخزون والقيود.')) return;
-  try {
-    await rpc('void_invoice', {p_shop:S.shop.id, p_kind:kind, p_id:id});
-    toast('تم الإلغاء ✓','ok');
-    await refreshData();
-    viewHist();
-  }catch(e){}
+  try { await rpc('void_invoice', {p_shop:S.shop.id, p_kind:kind, p_id:id}); toast('تم الإلغاء ✓','ok'); await loadData(); viewHist(); } catch(e){}
 }
 
-function printInv(id,kind){
-  const el = document.querySelector(`[onclick*="showInv('${id}'"]`);
-  // We'll do a custom print
-  window.print();
-}
+function printInv(id,kind){ window.print(); }
 
 // ============= PRODUCTS =============
 function viewProds(){
@@ -534,10 +438,7 @@ function viewProds(){
       <input id=pb placeholder="باركود (اختياري)">
       <button class="b s" style="flex:0" onclick="scanBarcode('pb')">📷</button>
     </div>
-    <div class="row">
-      <input id=pp type="number" placeholder="سعر البيع">
-      <select id=pc><option>SYP<option>USD</select>
-    </div>
+    <div class="row"><input id=pp type="number" placeholder="سعر البيع"><select id=pc><option>SYP<option>USD</select></div>
     <input id=pm type="number" placeholder="حد التنبيه للمخزون">
     <button class="b" style="width:100%" onclick="saveProd()">حفظ المنتج</button>
   </div>`:''}
@@ -554,14 +455,8 @@ function filterProds(){
   const list = S.prods.filter(p=>!q || norm(p.name).includes(q) || norm(p.barcode)===q);
   $('#prodgrid').innerHTML = list.map(p=>`
     <div class="it" onclick="editProd('${p.id}')">
-      <div>
-        <div class="name">${esc(p.name)}</div>
-        <div class="m">مخزون: ${fmt(p.total_qty)} ${p.unit} ${p.total_qty<=p.min_stock && p.min_stock>0?'<span class="badge r">قارب على النفاد</span>':''}</div>
-      </div>
-      <div style="text-align:end">
-        <div class="name">${fmt(p.sale_price)} ${p.sale_currency}</div>
-        ${p.barcode?`<div class="m" dir="ltr">${esc(p.barcode)}</div>`:''}
-      </div>
+      <div><div class="name">${esc(p.name)}</div><div class="m">مخزون: ${fmt(p.total_qty)} ${p.unit} ${p.total_qty<=p.min_stock && p.min_stock>0?'<span class="badge r">قارب على النفاد</span>':''}</div></div>
+      <div style="text-align:end"><div class="name">${fmt(p.sale_price)} ${p.sale_currency}</div>${p.barcode?`<div class="m" dir="ltr">${esc(p.barcode)}</div>`:''}</div>
     </div>`).join('') || '<div class="m" style="text-align:center;padding:20px">لا منتجات</div>';
 }
 
@@ -569,88 +464,56 @@ async function saveProd(){
   const n=$('#pn').value.trim();
   if(!n) return toast('اسم المنتج مطلوب','error');
   try{
-    const {error}=await db.from('products').insert({
-      shop_id: S.shop.id, name: n, barcode: $('#pb').value.trim()||null,
-      sale_price: +$('#pp').value||0, sale_currency: $('#pc').value,
-      min_stock: +$('#pm').value||0
-    });
+    const {error}=await db.from('products').insert({shop_id: S.shop.id, name: n, barcode: $('#pb').value.trim()||null, sale_price: +$('#pp').value||0, sale_currency: $('#pc').value, min_stock: +$('#pm').value||0});
     if(error) throw error;
-    toast('تم حفظ المنتج ✓','ok');
-    await refreshData();
-    viewProds();
-  } catch(e){ toast(e.message || e.code==='23505'?'باركود مكرر':e.message,'error'); }
+    toast('تم حفظ المنتج ✓','ok'); await loadData(); viewProds();
+  } catch(e){ toast(e.message || 'باركود مكرر','error'); }
 }
 
 async function editProd(id){
   const p = S.prods.find(x=>x.id===id);
   if(!p) return;
   if(!['owner','manager'].includes(S.member.role)) return toast('غير مصرح','error');
-  
   $('#v').innerHTML = `<div class="card">
     <h3>تعديل منتج</h3>
     <input id=en value="${esc(p.name)}">
     <input id=eb value="${esc(p.barcode||'')}">
-    <div class="row">
-      <input id=ep type="number" value="${p.sale_price}">
-      <select id=ec><option value=SYP ${p.sale_currency==='SYP'?'selected':''}>SYP<option value=USD ${p.sale_currency==='USD'?'selected':''}>USD</select>
-    </div>
+    <div class="row"><input id=ep type="number" value="${p.sale_price}"><select id=ec><option value=SYP ${p.sale_currency==='SYP'?'selected':''}>SYP<option value=USD ${p.sale_currency==='USD'?'selected':''}>USD</select></div>
     <input id=ei type="number" value="${p.min_stock}">
-    <div class="row">
-      <button class="b" onclick="updateProd('${p.id}')">حفظ التعديل</button>
-      <button class="b s" onclick="viewProds()">رجوع</button>
-    </div>
+    <div class="row"><button class="b" onclick="updateProd('${p.id}')">حفظ</button><button class="b s" onclick="viewProds()">رجوع</button></div>
     <button class="b r" style="width:100%;margin-top:8px" onclick="delProd('${p.id}')">حذف المنتج</button>
   </div>`;
 }
 
 async function updateProd(id){
   try{
-    const {error}=await db.from('products').update({
-      name: $('#en').value.trim(),
-      barcode: $('#eb').value.trim()||null,
-      sale_price: +$('#ep').value||0,
-      sale_currency: $('#ec').value,
-      min_stock: +$('#ei').value||0
-    }).eq('id',id);
+    const {error}=await db.from('products').update({name: $('#en').value.trim(), barcode: $('#eb').value.trim()||null, sale_price: +$('#ep').value||0, sale_currency: $('#ec').value, min_stock: +$('#ei').value||0}).eq('id',id);
     if(error)throw error;
-    toast('تم التعديل ✓','ok');
-    await refreshData();
-    viewProds();
+    toast('تم التعديل ✓','ok'); await loadData(); viewProds();
   }catch(e){ toast(e.message,'error'); }
 }
 
 async function delProd(id){
-  if(!confirm('حذف المنتج؟ سيختفي من القوائم لكن الفواتير القديمة تبقى.')) return;
+  if(!confirm('حذف المنتج؟')) return;
   const {error}=await db.from('products').update({active:false}).eq('id',id);
   if(error)return toast(error.message,'error');
-  await refreshData();
-  toast('تم الحذف','ok');
-  viewProds();
+  await loadData(); toast('تم الحذف','ok'); viewProds();
 }
 
 // ============= DEBT =============
 async function viewDebt(){
   $('#v').innerHTML='<div class="m" style="text-align:center;padding:20px">جاري التحميل...</div>';
   const {data} = await db.from('v_partner_balances').select('*').eq('shop_id',S.shop.id).order('name');
-  
   $('#v').innerHTML = `<div class="card">
     <h3>إضافة زبون/مورد</h3>
-    <input id=an placeholder="الاسم">
-    <input id=ap placeholder="الهاتف (اختياري)">
+    <input id=an placeholder="الاسم"><input id=ap placeholder="الهاتف (اختياري)">
     <select id=ak><option value=customer>زبون<option value=supplier>مورد</select>
     <button class="b" style="width:100%" onclick="savePartner()">حفظ</button>
   </div>
-  <div class="card">
-    <h3>الأرصدة</h3>
+  <div class="card"><h3>الأرصدة</h3>
     ${(data||[]).map(p=>{
       const v = p.kind==='customer'?p.receivable:p.payable;
-      return `<div class="it" onclick="viewStmt('${p.partner_id}')">
-        <div>
-          <div class="name">${esc(p.name)}</div>
-          <div class="m">${p.kind==='customer'?'زبون':'مورد'}</div>
-        </div>
-        <div class="name ${v>0?'neg':''}">${p.kind==='customer'?'عليه':'علينا'}: ${fmt(v)}</div>
-      </div>`;
+      return `<div class="it" onclick="viewStmt('${p.partner_id}')"><div><div class="name">${esc(p.name)}</div><div class="m">${p.kind==='customer'?'زبون':'مورد'}</div></div><div class="name ${v>0?'neg':''}">${p.kind==='customer'?'عليه':'علينا'}: ${fmt(v)}</div></div>`;
     }).join('')||'<div class="m" style="text-align:center;padding:20px">لا أحد</div>'}
   </div>`;
 }
@@ -660,30 +523,26 @@ async function savePartner(){
   if(!n)return toast('الاسم مطلوب','error');
   const {error}=await db.from('partners').insert({shop_id:S.shop.id, name:n, phone:$('#ap').value, kind:$('#ak').value});
   if(error)return toast(error.message,'error');
-  toast('تم الحفظ ✓','ok');
-  await refreshData();
-  viewDebt();
+  toast('تم الحفظ ✓','ok'); await loadData(); viewDebt();
 }
 
 async function viewStmt(pid){
   const p = S.parts.find(x=>x.id===pid);
   $('#v').innerHTML = `<div class="card"><h3>كشف حساب ${esc(p.name)}</h3><div id=stm class="m">جاري التحميل...</div></div>`;
-  const today = new Date().toISOString().slice(0,10);
+  const todayStr = new Date().toISOString().slice(0,10);
   const from = new Date(Date.now()-30*864e5).toISOString().slice(0,10);
   try{
-    const data = await rpc('account_statement',{p_shop:S.shop.id, p_partner:pid, p_from:from, p_to:today});
+    const data = await rpc('account_statement',{p_shop:S.shop.id, p_partner:pid, p_from:from, p_to:todayStr});
     $('#stm').innerHTML = data.length? `<table><tr><th>التاريخ</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr>${data.map(r=>`<tr><td>${r.entry_date}</td><td>${esc(r.description)}</td><td>${r.debit>0?fmt(r.debit):''}</td><td>${r.credit>0?fmt(r.credit):''}</td><td>${fmt(r.balance)}</td></tr>`).join('')}</table>` : 'لا حركات';
   }catch(e){}
 }
 
 // ============= REPORTS =============
 async function viewRep(){
-  $('#v').innerHTML = `<div class="card">
-    <h3>التقارير السريعة</h3>
-    <div class="row"><button class="b s" onclick="viewRepDaily()">ربح اليوم</button><button class="b s" onclick="viewRepMonth()">ربح الشهر</button></div>
-    <div class="row"><button class="b s" onclick="viewRepLow()">مخزون منخفض</button><button class="b s" onclick="viewRepTrial()">ميزان المراجعة</button></div>
-  </div>
-  <div id=reparea></div>`;
+  $('#v').innerHTML = `<div class="card"><h3>التقارير السريعة</h3>
+    <div class="row"><button class="b s" onclick="viewRepDaily()">ربح اليوم</button><button class="b s" onclick="viewRepLow()">مخزون منخفض</button></div>
+    <div class="row"><button class="b s" onclick="viewRepTrial()">ميزان المراجعة</button></div>
+  </div><div id=reparea></div>`;
   viewRepDaily();
 }
 
@@ -691,8 +550,7 @@ async function viewRepDaily(){
   const data = await db.from('v_daily_profit').select('*').eq('shop_id',S.shop.id).eq('entry_date',today()).single();
   if(!data.data) return $('#reparea').innerHTML='<div class="card m">لا حركات اليوم</div>';
   const d=data.data;
-  $('#reparea').innerHTML = `<div class="card">
-    <h3>اليوم (${today()})</h3>
+  $('#reparea').innerHTML = `<div class="card"><h3>اليوم (${today()})</h3>
     <div class="it" style="cursor:default"><span>المبيعات</span><b>${fmt(d.sales)}</b></div>
     <div class="it" style="cursor:default"><span>تكلفة البضاعة</span><b>${fmt(d.cogs)}</b></div>
     <div class="it" style="cursor:default"><span>المصاريف</span><b>${fmt(d.expenses)}</b></div>
@@ -702,9 +560,7 @@ async function viewRepDaily(){
 
 async function viewRepLow(){
   const data = await db.from('v_low_stock').select('*').eq('shop_id',S.shop.id);
-  $('#reparea').innerHTML = `<div class="card"><h3>مخزون منخفض</h3>
-  ${(data.data||[]).map(x=>`<div class="it" style="cursor:default"><span>${esc(x.name)}</span><b class="neg">${fmt(x.current_qty)} / ${fmt(x.min_stock)}</b></div>`).join('')||'<div class="m">لا منتجات</div>'}
-  </div>`;
+  $('#reparea').innerHTML = `<div class="card"><h3>مخزون منخفض</h3>${(data.data||[]).map(x=>`<div class="it" style="cursor:default"><span>${esc(x.name)}</span><b class="neg">${fmt(x.current_qty)} / ${fmt(x.min_stock)}</b></div>`).join('')||'<div class="m">لا منتجات</div>'}</div>`;
 }
 
 async function viewRepTrial(){
@@ -715,24 +571,18 @@ async function viewRepTrial(){
   </table></div>`;
 }
 
-// ============= STOCK / SNAPSHOT =============
+// ============= STOCK =============
 async function viewStock(){
-  $('#v').innerHTML = `<div class="card">
-    <h3>المستودعات</h3>
+  $('#v').innerHTML = `<div class="card"><h3>المستودعات</h3>
     ${S.whs.map(w=>`<div class="it" style="cursor:default"><span>${esc(w.name)}${w.is_default?' <span class="badge p">افتراضي</span>':''}</span></div>`).join('')}
     <button class="b s" style="width:100%;margin-top:8px" onclick="newWarehouse()">+ مستودع</button>
-  </div>
-  <div class="card">
-    <h3>عمليات</h3>
-    <div class="row"><button class="b s" onclick="go('stock_adjust')">تسوية جرد</button><button class="b s" onclick="go('stock_transfer')">تحويل</button></div>
   </div>`;
 }
 
 // ============= MANUFACTURING =============
 async function viewMfg(){
   const bom = await db.from('bom_items').select('product_id, component_id, qty, products!bom_items_product_id_fkey(name), c:products!bom_items_component_id_fkey(name)').eq('shop_id',S.shop.id);
-  $('#v').innerHTML = `<div class="card">
-    <h3>وصفات التصنيع</h3>
+  $('#v').innerHTML = `<div class="card"><h3>وصفات التصنيع</h3>
     ${(bom.data||[]).map(x=>`<div class="it" style="cursor:default"><span>${esc(x.products?.name)} ← ${esc(x.c?.name)} × ${fmt(x.qty)}</span></div>`).join('')||'<div class="m">لا وصفات بعد</div>'}
   </div>`;
 }
@@ -741,7 +591,7 @@ async function viewMfg(){
 async function viewAcc(){
   const data = await db.from('v_trial_balance').select('*').eq('shop_id',S.shop.id).order('code');
   $('#v').innerHTML = `<div class="card"><h3>شجرة الحسابات</h3>
-  ${(data.data||[]).map(a=>`<div class="it" style="cursor:default;padding-inline-start:${a.parent_id?20:0}px"><span>${esc(a.code)} ${esc(a.name)}</span><b>${fmt(a.balance)}</b></div>`).join('')}
+    ${(data.data||[]).map(a=>`<div class="it" style="cursor:default;padding-inline-start:${a.parent_id?20:0}px"><span>${esc(a.code)} ${esc(a.name)}</span><b>${fmt(a.balance)}</b></div>`).join('')}
   </div>`;
 }
 
@@ -749,41 +599,29 @@ async function viewAcc(){
 async function viewTeam(){
   const data = await db.from('shop_members').select('*').eq('shop_id',S.shop.id);
   $('#v').innerHTML = `<div class="card"><h3>الفريق</h3>
-  ${(data.data||[]).map(m=>`<div class="it" style="cursor:default"><span>${m.user_id.slice(0,8)}...</span><b>${m.role}</b></div>`).join('')}
+    ${(data.data||[]).map(m=>`<div class="it" style="cursor:default"><span>${m.user_id.slice(0,8)}...</span><b>${m.role}</b></div>`).join('')}
   </div>`;
 }
 
 // ============= SCANNER =============
 let h5=null;
 function startScan(){
-  $('#scan').style.display='flex';
-  $('#sh').textContent='وجه الكاميرا نحو الباركود';
+  $('#scan').style.display='flex'; $('#sh').textContent='وجه الكاميرا نحو الباركود';
   h5 = new Html5Qrcode("reader");
   h5.start({facingMode:"environment"}, {fps:10, qrbox:250}, (text)=>{
     closeScan();
     const p = S.prods.find(x=>norm(x.barcode)===norm(text));
-    if(p) addToCart(p);
-    else toast('باركود غير معروف: '+text,'error');
+    if(p) addToCart(p); else toast('باركود غير معروف: '+text,'error');
   }).catch(e=>{closeScan();toast('تعذر فتح الكاميرا','error');});
 }
-function closeScan(){
-  $('#scan').style.display='none';
-  if(h5){ h5.stop().catch(()=>{}); h5=null; }
-}
+function closeScan(){ $('#scan').style.display='none'; if(h5){ h5.stop().catch(()=>{}); h5=null; } }
 function scanBarcode(inputId){
-  $('#scan').style.display='flex';
-  $('#sh').textContent='وجه الكاميرا نحو الباركود';
+  $('#scan').style.display='flex'; $('#sh').textContent='وجه الكاميرا نحو الباركود';
   h5 = new Html5Qrcode("reader");
-  h5.start({facingMode:"environment"}, {fps:10, qrbox:250}, (text)=>{
-    closeScan();
-    document.getElementById(inputId).value=text;
-  }).catch(e=>{closeScan();toast('تعذر فتح الكاميرا','error');});
+  h5.start({facingMode:"environment"}, {fps:10, qrbox:250}, (text)=>{ closeScan(); document.getElementById(inputId).value=text; }).catch(e=>{closeScan();toast('تعذر فتح الكاميرا','error');});
 }
 
-// ============= INIT =============
-window.addEventListener('DOMContentLoaded', ()=>{
-  boot();
-});
+window.addEventListener('DOMContentLoaded', ()=>{ boot(); });
 </script>
 </body>
 </html>
