@@ -49,19 +49,11 @@ th{color:var(--m);font-weight:600}
 #scan{position:fixed;inset:0;background:#000;z-index:9999;display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:16px}
 #reader{width:100%;max-width:480px;border-radius:12px;overflow:hidden}
 #scan .msg{color:#fff;text-align:center;font-weight:600}
-#rcpt{display:none}
-@media print{body>*:not(#rcpt){display:none!important}#rcpt{display:block;width:72mm;font:12px Tahoma,sans-serif;color:#000;padding:4mm}}
-.tabs{display:flex;gap:8px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px}
-.tabs button{flex:0 0 auto;padding:8px 16px;border-radius:20px;background:var(--b);color:var(--t);border:0;font:inherit;font-size:13px;font-weight:600}
-.tabs button.on{background:var(--p);color:#fff}
-.quick-btn{position:fixed;bottom:20px;right:20px;width:60px;height:60px;border-radius:30px;background:var(--p);color:#fff;border:0;font-size:24px;box-shadow:0 4px 12px rgba(15,123,79,.4);z-index:100;display:flex;align-items:center;justify-content:center}
-@media(min-width:768px){.quick-btn{width:70px;height:70px;bottom:30px;right:30px}}
 .big-total{font-size:32px;font-weight:800;color:var(--p);text-align:center;margin:16px 0}
 </style>
 </head>
 <body>
 <div id="app"></div>
-<div id="rcpt"></div>
 <div id="scan"><div id="reader"></div><div class="msg" id="sh">جاري التحميل...</div><button class="b r" onclick="closeScan()" style="width:100%;max-width:300px">إغلاق</button></div>
 <div id="toast"></div>
 
@@ -82,16 +74,13 @@ const today=()=>new Date().toISOString().slice(0,10);
 let S={
   shop:null, member:null, branch:null, branchObj:null, wh:null, whs:[], branches:[],
   prods:[], parts:[], cats:[], cart:[], cur:'SYP', rate:1,
-  tab:'sale', mode:'sale', busy:false,
-  hist:[], histKind:'sale'
+  tab:'sale', mode:'sale', busy:false, lv:{}
 };
 
 function toast(m,type='info'){
-  const t=$('#toast');
-  t.textContent=m;
+  const t=$('#toast'); t.textContent=m;
   t.style.background = type==='error'?'var(--r)':(type==='ok'?'var(--p)':'#1f2937');
-  t.style.display='block';
-  clearTimeout(toast.t);
+  t.style.display='block'; clearTimeout(toast.t);
   toast.t=setTimeout(()=>t.style.display='none',4000);
 }
 
@@ -101,10 +90,7 @@ async function rpc(fn,args={}) {
   return data;
 }
 
-// ============= AUTH =============
-db.auth.onAuthStateChange((e,s)=>{
-  if(e==='SIGNED_OUT') location.reload();
-});
+db.auth.onAuthStateChange((e,s)=>{ if(e==='SIGNED_OUT') location.reload(); });
 
 async function boot(){
   $('#app').innerHTML='<div style="display:flex;height:100vh;align-items:center;justify-content:center;"><b>جاري تحميل النظام...</b></div>';
@@ -118,21 +104,12 @@ async function boot(){
     
     const {data:m_arr, error: m_err} = await db.from('shop_members').select('shop_id, role, max_discount_pct').eq('user_id',user.id).limit(1);
     
-    if(m_err) {
-      $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ: ${m_err.message}</div>`;
-      return;
-    }
-    
-    if(!m_arr || m_arr.length === 0){
-      return createShopView();
-    }
+    if(m_err) { $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ: ${m_err.message}</div>`; return; }
+    if(!m_arr || m_arr.length === 0){ return createShopView(); }
     
     const m = m_arr[0];
     const {data:sh, error: sh_err} = await db.from('shops').select('*').eq('id',m.shop_id).single();
-    if(sh_err) {
-      $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ في المحل: ${sh_err.message}</div>`;
-      return;
-    }
+    if(sh_err) { $('#app').innerHTML = `<div style="padding:20px;text-align:center;color:red">خطأ في المحل: ${sh_err.message}</div>`; return; }
     
     S.shop = sh; S.member = m;
     await loadData();
@@ -148,10 +125,7 @@ function loginView(){
     <h2 style="text-align:center;color:var(--p)">الحسام</h2>
     <input id=em type=email dir=ltr placeholder="البريد الإلكتروني">
     <input id=pw type=password dir=ltr placeholder="كلمة المرور">
-    <div class="row">
-      <button class="b" style="flex:2" onclick="doAuth(0)">دخول</button>
-      <button class="b s" onclick="doAuth(1)">حساب جديد</button>
-    </div>
+    <div class="row"><button class="b" style="flex:2" onclick="doAuth(0)">دخول</button><button class="b s" onclick="doAuth(1)">حساب جديد</button></div>
   </div></main>`;
 }
 async function doAuth(up){
@@ -165,18 +139,14 @@ async function doAuth(up){
 function createShopView(){
   $('#app').innerHTML=`<main style="display:flex;align-items:center;justify-content:center;height:100vh">
   <div class="card" style="width:100%;max-width:400px;text-align:center">
-    <h3>إنشاء محل جديد</h3>
-    <input id=sn placeholder="اسم المحل">
+    <h3>إنشاء محل جديد</h3><input id=sn placeholder="اسم المحل">
     <button class="b" style="width:100%" onclick="createShop()">إنشاء</button>
   </div></main>`;
 }
 async function createShop(){
   const n=$('#sn').value.trim();
   if(!n)return toast('اسم المحل مطلوب','error');
-  try{
-    await rpc('create_shop', {p_name:n});
-    boot();
-  }catch(e){}
+  try{ await rpc('create_shop', {p_name:n}); boot(); }catch(e){}
 }
 
 async function loadData(){
@@ -188,33 +158,26 @@ async function loadData(){
   try { S.rate = await rpc('get_rate',{p_shop:S.shop.id, p_currency:'USD', p_date:today()}); } 
   catch(e) { S.rate = S.shop.usd_rate || 1; }
 
-  const [p, pt, wh, sl, cat] = await Promise.all([
+  const [p, pt, wh, sl] = await Promise.all([
     db.from('v_product_stock').select('*').eq('shop_id',S.shop.id).order('name'),
     db.from('partners').select('*').eq('shop_id',S.shop.id).eq('active',true).order('name'),
     db.from('warehouses').select('*').eq('branch_id',S.branch).eq('active',true),
-    db.from('stock_levels').select('product_id,warehouse_id,qty').eq('shop_id',S.shop.id),
-    db.from('categories').select('*').eq('shop_id',S.shop.id).eq('active',true).order('name')
+    db.from('stock_levels').select('product_id,warehouse_id,qty').eq('shop_id',S.shop.id)
   ]);
-  S.prods = p.data || [];
-  S.parts = pt.data || [];
-  S.whs = wh.data || [];
-  S.cats = cat.data || [];
+  S.prods = p.data || []; S.parts = pt.data || []; S.whs = wh.data || [];
   S.lv = {};
   (sl.data||[]).forEach(x=>S.lv[x.product_id+'|'+x.warehouse_id]=+x.qty);
-  if(!S.wh || !S.whs.find(w=>w.id===S.wh)){
-    S.wh = (S.whs.find(w=>w.is_default)||S.whs[0])?.id;
-  }
+  if(!S.wh || !S.whs.find(w=>w.id===S.wh)){ S.wh = (S.whs.find(w=>w.is_default)||S.whs[0])?.id; }
 }
 
 const lvl=(pid,wid)=>S.lv[pid+'|'+wid]||0;
 
-// ============= UI SHELL =============
 function shell(){
   const tabs = [
     {k:'sale', n:'بيع', icon:'🛒'}, {k:'buy', n:'شراء', icon:'📥'},
     {k:'hist', n:'الفواتير', icon:'🧾'}, {k:'prod', n:'المنتجات', icon:'📦'},
-    {k:'debt', n:'الديون', icon:'💰'}, {k:'rep', n:'التقارير', icon:'📊'},
-    {k:'stock', n:'المخزون', icon:'🏭'}, {k:'mfg', n:'التصنيع', icon:'⚙️'},
+    {k:'stock', n:'المخزون', icon:'🏭'}, {k:'debt', n:'الديون', icon:'💰'}, 
+    {k:'rep', n:'التقارير', icon:'📊'}, {k:'mfg', n:'التصنيع', icon:'⚙️'},
     {k:'acc', n:'الحسابات', icon:'📒'}, {k:'team', n:'الفريق', icon:'👥'}
   ];
   $('#app').innerHTML=`<header>
@@ -237,10 +200,7 @@ function switchBranch(){
   const names=S.branches.map((b,i)=>`${i+1}. ${b.name}`).join('\n');
   const v=prompt('اختر رقم الفرع:\n'+names);
   const idx=parseInt(v)-1;
-  if(idx>=0 && idx<S.branches.length){
-    S.branchObj=S.branches[idx]; S.branch=S.branchObj.id;
-    loadData().then(()=>shell());
-  }
+  if(idx>=0 && idx<S.branches.length){ S.branchObj=S.branches[idx]; S.branch=S.branchObj.id; loadData().then(()=>shell()); }
 }
 
 function go(k){
@@ -252,8 +212,7 @@ function go(k){
 
 // ============= SALE / BUY =============
 function viewSale(){
-  S.mode = S.tab;
-  if(S.cart.length===0) S.cart=[];
+  S.mode = S.tab; if(S.cart.length===0) S.cart=[];
   const isSale = S.mode==='sale';
   const partners = S.parts.filter(p=>p.kind===(isSale?'customer':'supplier'));
   
@@ -273,25 +232,21 @@ function viewSale(){
       <select id=cur onchange="changeCur(this.value)"><option value=SYP ${S.cur==='SYP'?'selected':''}>ل.س</option><option value=USD ${S.cur==='USD'?'selected':''}>USD</option></select>
       <select id=partner><option value="">${isSale?'زبون نقدي':'مورد نقدي'}</option>${partners.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
     </div>
-    ${S.whs.length>1?`<select id=whsel onchange="S.wh=this.value;renderProds()">${S.whs.map(w=>`<option value="${w.id}" ${w.id===S.wh?'selected':''}>${esc(w.name)}</option>`).join('')}</select>`:''}
+    ${S.whs.length>1?`<select id=whsel onchange="S.wh=this.value;searchProd()">${S.whs.map(w=>`<option value="${w.id}" ${w.id===S.wh?'selected':''}>${esc(w.name)}</option>`).join('')}</select>`:''}
     <input id=paid type="number" inputmode="decimal" placeholder="المبلغ المدفوع (فارغ = الكل)">
     <div class="row">
       <button class="b" style="flex:2" onclick="submitInvoice()">${isSale?'تسجيل البيع':'تسجيل الشراء'}</button>
       <button class="b s" onclick="clearCart()">مسح</button>
     </div>
   </div>`;
-  S.cur = 'SYP';
-  renderCart(); searchProd();
+  S.cur = 'SYP'; renderCart(); searchProd();
   setTimeout(()=>$('#q')?.focus(),100);
 }
 
 function searchProd(selectFirst=false){
   const q = norm($('#q').value);
   const list = S.prods.filter(p=>!q || norm(p.name).includes(q) || norm(p.barcode)===q).slice(0,10);
-  
-  if(selectFirst && list.length===1 && q){
-    addToCart(list[0]); $('#q').value=''; searchProd(); return;
-  }
+  if(selectFirst && list.length===1 && q){ addToCart(list[0]); $('#q').value=''; searchProd(); return; }
   
   $('#prodlist').innerHTML = list.map(p=>{
     const stock = lvl(p.id, S.wh);
@@ -344,14 +299,12 @@ function clearCart(){ if(!S.cart.length)return; if(!confirm('مسح الفاتو
 async function submitInvoice(){
   if(S.busy) return;
   if(!S.cart.length) return toast('الفاتورة فارغة','error');
-  
   const total = S.cart.reduce((s,i)=>s+i.qty*i.price,0);
   const paidInput = $('#paid').value;
   let paid = paidInput===''? total : +paidInput;
   if(paid<0 || isNaN(paid)) return toast('مبلغ غير صحيح','error');
   
   S.busy=true; const btn = event.target; btn.disabled=true; btn.textContent='جارٍ...';
-  
   try {
     const items = S.cart.map(i=>{
       if(S.mode==='sale') return {product_id:i.id, qty:i.qty, price:i.price};
@@ -374,10 +327,7 @@ async function viewHist(){
     db.from('sales').select('id,sale_date,currency,total,paid,voided_at,partners(name)').eq('shop_id',S.shop.id).order('created_at',{ascending:false}).limit(30),
     db.from('purchases').select('id,purchase_date,currency,total,paid,voided_at,partners(name)').eq('shop_id',S.shop.id).order('created_at',{ascending:false}).limit(30)
   ]);
-  const all = [
-    ...(sales.data||[]).map(x=>({...x,kind:'sale',date:x.sale_date})),
-    ...(purchases.data||[]).map(x=>({...x,kind:'purchase',date:x.purchase_date}))
-  ].sort((a,b)=>b.date.localeCompare(a.date));
+  const all = [ ...(sales.data||[]).map(x=>({...x,kind:'sale',date:x.sale_date})), ...(purchases.data||[]).map(x=>({...x,kind:'purchase',date:x.purchase_date})) ].sort((a,b)=>b.date.localeCompare(a.date));
   
   $('#v').innerHTML = `<div class="card"><h3>آخر الفواتير</h3>
     ${all.map(x=>`<div class="it" onclick="showInv('${x.id}','${x.kind}')">
@@ -404,7 +354,6 @@ async function showInv(id,kind){
     <h3>${kind==='sale'?'فاتورة بيع':'فاتورة شراء'} #${esc(inv_data.invoice_no)}</h3>
     <div class="m">التاريخ: ${kind==='sale'?inv_data.sale_date:inv_data.purchase_date}</div>
     <div class="m">الزبون/المورد: ${esc(inv_data.partners?.name||'نقدي')}</div>
-    <div class="m">العملة: ${inv_data.currency} · سعر الصرف: ${fmt(inv_data.rate)}</div>
     ${inv_data.voided_at?'<div class="badge r" style="margin:8px 0">ملغاة</div>':''}
     <div style="margin:16px 0">${items_data.map(i=>`<div class="it" style="cursor:default">
       <div><div class="name">${esc(i.products?.name)}</div><div class="m">${fmt(i.qty)} × ${fmt(i.price||i.unit_cost)}</div></div>
@@ -413,7 +362,7 @@ async function showInv(id,kind){
     <div class="big-total">${fmt(inv_data.total)} ${inv_data.currency}</div>
     <div class="m" style="text-align:center">مدفوع: ${fmt(inv_data.paid)} · متبقي: ${fmt(inv_data.total-inv_data.paid)}</div>
     <div class="row" style="margin-top:16px">
-      <button class="b" onclick="printInv('${id}','${kind}')">🖨️ طباعة</button>
+      <button class="b" onclick="printInv()">🖨️ طباعة</button>
       ${!inv_data.voided_at && S.member.role!=='viewer'?`<button class="b r" onclick="voidInv('${id}','${kind}')">إلغاء</button>`:''}
     </div>
     <button class="b s" style="width:100%;margin-top:8px" onclick="viewHist()">رجوع</button>
@@ -424,8 +373,7 @@ async function voidInv(id,kind){
   if(!confirm('إلغاء هذه الفاتورة؟ سيتم عكس المخزون والقيود.')) return;
   try { await rpc('void_invoice', {p_shop:S.shop.id, p_kind:kind, p_id:id}); toast('تم الإلغاء ✓','ok'); await loadData(); viewHist(); } catch(e){}
 }
-
-function printInv(id,kind){ window.print(); }
+function printInv(){ window.print(); }
 
 // ============= PRODUCTS =============
 function viewProds(){
@@ -434,10 +382,7 @@ function viewProds(){
   ${isOwner?`<div class="card">
     <h3>إضافة منتج جديد</h3>
     <input id=pn placeholder="اسم المنتج">
-    <div class="row">
-      <input id=pb placeholder="باركود (اختياري)">
-      <button class="b s" style="flex:0" onclick="scanBarcode('pb')">📷</button>
-    </div>
+    <div class="row"><input id=pb placeholder="باركود (اختياري)"><button class="b s" style="flex:0" onclick="scanBarcode('pb')">📷</button></div>
     <div class="row"><input id=pp type="number" placeholder="سعر البيع"><select id=pc><option>SYP<option>USD</select></div>
     <input id=pm type="number" placeholder="حد التنبيه للمخزون">
     <button class="b" style="width:100%" onclick="saveProd()">حفظ المنتج</button>
@@ -476,8 +421,7 @@ async function editProd(id){
   if(!['owner','manager'].includes(S.member.role)) return toast('غير مصرح','error');
   $('#v').innerHTML = `<div class="card">
     <h3>تعديل منتج</h3>
-    <input id=en value="${esc(p.name)}">
-    <input id=eb value="${esc(p.barcode||'')}">
+    <input id=en value="${esc(p.name)}"><input id=eb value="${esc(p.barcode||'')}">
     <div class="row"><input id=ep type="number" value="${p.sale_price}"><select id=ec><option value=SYP ${p.sale_currency==='SYP'?'selected':''}>SYP<option value=USD ${p.sale_currency==='USD'?'selected':''}>USD</select></div>
     <input id=ei type="number" value="${p.min_stock}">
     <div class="row"><button class="b" onclick="updateProd('${p.id}')">حفظ</button><button class="b s" onclick="viewProds()">رجوع</button></div>
@@ -498,6 +442,49 @@ async function delProd(id){
   const {error}=await db.from('products').update({active:false}).eq('id',id);
   if(error)return toast(error.message,'error');
   await loadData(); toast('تم الحذف','ok'); viewProds();
+}
+
+// ============= STOCK (NEW) =============
+function viewStock(){
+  $('#v').innerHTML = `<div class="card">
+    <h3>المخزون الافتتاحي (تهيئة الكميات)</h3>
+    <p class="m">استخدم هذه الشاشة لإدخال كميات البضاعة الموجودة حالياً في محلك.</p>
+    <select id=st_wh style="margin-bottom:10px">${S.whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select>
+    <input id=st_q placeholder="ابحث عن منتج..." oninput="stockList()">
+    <div id=st_list></div>
+  </div>`;
+  stockList();
+}
+
+function stockList(){
+  const q = norm($('#st_q').value);
+  const wh = $('#st_wh').value;
+  const list = S.prods.filter(p=>!q || norm(p.name).includes(q));
+  
+  $('#st_list').innerHTML = list.map(p=>`
+    <div class="it" onclick="adjustStock('${p.id}','${wh}')">
+      <div><div class="name">${esc(p.name)}</div><div class="m">اضغط لتعديل الكمية</div></div>
+      <div class="name">${fmt(lvl(p.id, wh))} ${p.unit}</div>
+    </div>`).join('') || '<div class="m">لا نتائج</div>';
+}
+
+async function adjustStock(pid, whid){
+  const p = S.prods.find(x=>x.id===pid);
+  const current = lvl(pid, whid);
+  const val = prompt(`أدخل الكمية الفعلية المتوفرة من (${p.name}) في هذا المستودع:`, current);
+  if(val===null || val==='') return;
+  const qty = +val;
+  if(qty < 0 || isNaN(qty)) return toast('كمية غير صحيحة','error');
+  
+  try {
+    await rpc('post_stock_adjust', {
+      p_shop: S.shop.id, p_branch: S.branch, p_wh: whid,
+      p_product: pid, p_new_qty: qty, p_client: uid(), p_reason: 'تسوية/افتتاحي'
+    });
+    toast('تم تحديث المخزون ✓','ok');
+    await loadData();
+    stockList();
+  } catch(e){}
 }
 
 // ============= DEBT =============
@@ -569,14 +556,6 @@ async function viewRepTrial(){
     <tr><th>الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr>
     ${(data.data||[]).filter(x=>+x.debit_total||+x.credit_total).map(x=>`<tr><td>${esc(x.name)}</td><td>${fmt(x.debit_total)}</td><td>${fmt(x.credit_total)}</td><td>${fmt(x.balance)}</td></tr>`).join('')}
   </table></div>`;
-}
-
-// ============= STOCK =============
-async function viewStock(){
-  $('#v').innerHTML = `<div class="card"><h3>المستودعات</h3>
-    ${S.whs.map(w=>`<div class="it" style="cursor:default"><span>${esc(w.name)}${w.is_default?' <span class="badge p">افتراضي</span>':''}</span></div>`).join('')}
-    <button class="b s" style="width:100%;margin-top:8px" onclick="newWarehouse()">+ مستودع</button>
-  </div>`;
 }
 
 // ============= MANUFACTURING =============
