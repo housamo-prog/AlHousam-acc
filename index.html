@@ -41,8 +41,6 @@ th{color:var(--m);font-weight:600}
 .badge.p{background:var(--p);color:#fff}
 #toast{position:fixed;bottom:20px;left:16px;right:16px;background:#1f2937;color:#fff;padding:14px;border-radius:12px;text-align:center;font-weight:600;display:none;z-index:9999}
 .big-total{font-size:32px;font-weight:800;color:var(--p);text-align:center;margin:16px 0}
-
-/* نافذة منبثقة مخصصة */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
 .modal{background:var(--c);padding:20px;border-radius:12px;width:100%;max-width:400px;text-align:center}
 </style>
@@ -51,7 +49,6 @@ th{color:var(--m);font-weight:600}
 <div id="app"></div>
 <div id="toast"></div>
 
-<!-- نافذة إدخال الكمية المخصصة -->
 <div class="modal-bg" id="myModal">
   <div class="modal">
     <h3 id="m_title">تعديل الكمية</h3>
@@ -146,7 +143,7 @@ function shell(){
 }
 function go(k){ S.tab=k; document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.k===k)); const map={sale:viewSale,buy:viewSale,hist:viewHist,prod:viewProds,stock:viewStock,debt:viewDebt,rep:viewRep}; const fn=map[k]; if(fn) fn(); }
 
-// ============= MODAL =============
+// ============= MODAL & STOCK =============
 function openModal(title, desc, defaultVal, pid, whid){
   S.mod_pid = pid; S.mod_wh = whid;
   $('#m_title').textContent = title; $('#m_desc').textContent = desc; $('#m_input').value = defaultVal;
@@ -158,16 +155,22 @@ async function saveModal(){
   const val = +$('#m_input').value;
   if(isNaN(val) || val < 0) return toast('كمية غير صحيحة','error');
   closeModal();
+  
+  // الحماية من الخطأ: إذا لم يكن هناك مستودع محدد، نأخذ الأول
+  let final_wh = S.mod_wh;
+  if(!final_wh || final_wh === 'undefined') final_wh = S.wh || S.whs[0]?.id;
+  
+  if(!final_wh) return toast('لم يتم العثور على مستودع','error');
+
   try {
-    await rpc('post_stock_adjust', {p_shop:S.shop.id, p_branch:S.branch, p_wh:S.mod_wh, p_product:S.mod_pid, p_new_qty:val, p_client:uid(), p_reason:'جرد'});
+    await rpc('post_stock_adjust', {p_shop:S.shop.id, p_branch:S.branch, p_wh:final_wh, p_product:S.mod_pid, p_new_qty:val, p_client:uid(), p_reason:'جرد'});
     toast('تم تحديث المخزون ✓','ok'); await loadData(); viewStock();
   } catch(e){}
 }
 
-// ============= STOCK =============
 function viewStock(){
   $('#v').innerHTML = `<div class="card"><h3>إدارة المخزون</h3><p class="m">اضغط على أي منتج لإدخال الكمية الفعلية (الافتتاحية أو الجرد).</p>
-    <select id=st_wh style="margin-bottom:10px">${S.whs.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select>
+    <select id=st_wh style="margin-bottom:10px" onchange="S.wh=this.value">${S.whs.map(w=>`<option value="${w.id}" ${w.id===S.wh?'selected':''}>${esc(w.name)}</option>`).join('')}</select>
     <input id=st_q placeholder="ابحث عن منتج..." oninput="stockList()">
     <div id=st_list></div>
   </div>`;
@@ -280,7 +283,7 @@ function viewProds(){
   const isOwner = ['owner','manager'].includes(S.member.role);
   $('#v').innerHTML = `
   ${isOwner?`<div class="card"><h3>إضافة منتج جديد</h3>
-    <input id=pn placeholder="اسم المنتج"><div class="row"><input id=pb placeholder="باركود (اختياري)"><button class="b s" style="flex:0" onclick="scanBarcode('pb')">📷</button></div>
+    <input id=pn placeholder="اسم المنتج"><div class="row"><input id=pb placeholder="باركود (اختياري)"><button class="b s" style="flex:0" onclick="toast('قريباً')">📷</button></div>
     <div class="row"><input id=pp type="number" placeholder="سعر البيع"><select id=pc><option>SYP<option>USD</select></div>
     <input id=pm type="number" placeholder="حد التنبيه للمخزون"><button class="b" style="width:100%" onclick="saveProd()">حفظ المنتج</button>
   </div>`:''}
@@ -370,13 +373,6 @@ async function viewRepTrial(){
     <tr><th>الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr>
     ${(data.data||[]).filter(x=>+x.debit_total||+x.credit_total).map(x=>`<tr><td>${esc(x.name)}</td><td>${fmt(x.debit_total)}</td><td>${fmt(x.credit_total)}</td><td>${fmt(x.balance)}</td></tr>`).join('')}
   </table></div>`;
-}
-
-// ============= SCANNER =============
-let h5=null;
-function scanBarcode(inputId){
-  // وظيفة المسح (تفعيلها هنا يتطلب مكتبة html5-qrcode، لتبسيط الكود في هذه النسخة سيتم تنبيه المستخدم فقط)
-  toast('كاميرا المسح ستُفعل في التحديث القادم');
 }
 
 window.addEventListener('DOMContentLoaded', ()=>{ boot(); });
